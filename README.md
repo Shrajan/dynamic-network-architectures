@@ -14,6 +14,9 @@ In contrast to the original [VGG](https://arxiv.org/pdf/1409.1556.pdf) implement
 ### U-Net
 For the [U-Net](https://arxiv.org/pdf/1505.04597.pdf) a plain convolutional encoder as well as a residual encoder are available. 
 
+### Attention-Net
+Based on the paper [Attention U-Net](https://arxiv.org/pdf/1804.03999), and the codes are modified using the [repository](https://github.com/ozan-oktay/Attention-Gated-Networks). 
+
 # Acknowledgements
 
 <p align="left">
