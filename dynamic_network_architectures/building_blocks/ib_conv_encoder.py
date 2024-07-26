@@ -9,183 +9,48 @@ from dynamic_network_architectures.building_blocks.simple_conv_blocks import Sta
 from dynamic_network_architectures.building_blocks.simple_conv_blocks import ConvDropoutNormReLU
 from dynamic_network_architectures.building_blocks.helper import maybe_convert_scalar_to_list, get_matching_pool_op
 
-from torch.nn.modules.conv import _ConvNd
-from torch.nn.modules.dropout import _DropoutNd
+from dynamic_network_architectures.building_blocks.ib_filters import IB_filters_2D, IB_filters_3D
+from torch.nn import functional as F
 
-from dynamic_network_architectures.building_blocks.helper import maybe_convert_scalar_to_list
-import math
-from sympy import *
+class DoG_on_2D(nn.Module):
+    def __init__(self, conv_On_filters, ib_strides, ib_paddings):
+        super(DoG_on_2D, self).__init__()
+        self.conv_On_filters = conv_On_filters
+        self.ib_strides = ib_strides
+        self.ib_paddings = ib_paddings
 
-def DoG_IB_2D(x, y, center, gamma, radius):
-    """compute weight at location (x, y) in the OOCS kernel with given parameters
-        Parameters:
-            x , y : position of the current weight
-            center : position of the kernel center
-            gamma : center to surround ratio
-            radius : center radius
+    def forward(self, input):
+        return F.conv2d(input, weight=self.conv_On_filters, stride=self.ib_strides, padding=self.ib_paddings)
+    
+class DoG_on_3D(nn.Module):
+    def __init__(self, conv_On_filters, ib_strides, ib_paddings):
+        super(DoG_on_3D, self).__init__()
+        self.conv_On_filters = conv_On_filters
+        self.ib_strides = ib_strides
+        self.ib_paddings = ib_paddings
 
-        Returns:
-            excite and inhibit : calculated from Equation2 in the paper, without the coefficients A-c and A-s
+    def forward(self, input):
+        return F.conv3d(input, weight=self.conv_On_filters, stride=self.ib_strides, padding=self.ib_paddings)
 
-    """
-    # compute sigma from radius of the center and gamma(center to surround ratio)
-    sigma = (radius / (2 * gamma)) * (math.sqrt((1 - gamma ** 2) / (-math.log(gamma))))
-    excite = (1 / (gamma ** 2)) * math.exp(-1 * ((x - center) ** 2 + (y - center) ** 2) / (2 * ((gamma * sigma) ** 2)))
-    inhibit = math.exp(-1 * ((x - center) ** 2 + (y - center) ** 2) / (2 * (sigma ** 2)))
+class DoG_off_2D(nn.Module):
+    def __init__(self, conv_Off_filters, ib_strides, ib_paddings):
+        super(DoG_off_2D, self).__init__()
+        self.conv_Off_filters = conv_Off_filters
+        self.ib_strides = ib_strides
+        self.ib_paddings = ib_paddings
 
-    return excite , inhibit
+    def forward(self, input):
+        return F.conv2d(input, weight=self.conv_Off_filters, stride=self.ib_strides, padding=self.ib_paddings)
 
+class DoG_off_3D(nn.Module):
+    def __init__(self, conv_Off_filters, ib_strides, ib_paddings):
+        super(DoG_off_3D, self).__init__()
+        self.conv_Off_filters = conv_Off_filters
+        self.ib_strides = ib_strides
+        self.ib_paddings = ib_paddings
 
-def IB_filters_2D(radius, gamma, in_channels, out_channels, off=False):
-    """compute the kernel filters with given shape and parameters
-        Parameters:
-            gamma : center to surround ratio
-            radius : center radius
-            in_channels and out_channels: filter dimensions
-            off(boolean) : if false, calculates on center kernel, and if true, off center
-
-        Returns:
-            kernel : On or Off center conv filters with requested shape
-
-    """
-
-    # size of the kernel
-    kernel_size = int((radius / gamma) * 2 - 1)
-    # center node index
-    centerX = int((kernel_size + 1) / 2)
-
-    posExcite = 0
-    posInhibit = 0
-    negExcite = 0
-    negInhibit = 0
-
-    for i in range(kernel_size):
-        for j in range(kernel_size):
-            excite, inhibit = DoG_IB_2D(i + 1, j + 1, centerX, gamma, radius)
-            if excite > inhibit:
-                posExcite += excite
-                posInhibit += inhibit
-            else:
-                negExcite += excite
-                negInhibit += inhibit
-
-    # Calculating A-c and A-s, with requiring the positive values sum up to 1 and negative values to -1
-    x, y = symbols('x y')
-    sum = 3.
-    if kernel_size == 3:
-        sum = 1.
-    elif kernel_size == 5:
-        sum = 3.
-    solution = solve((x * posExcite + y * posInhibit - sum, negExcite * x + negInhibit * y + sum), x, y)
-    A_c, A_s = float(solution[x].evalf()), float(solution[y].evalf())
-
-    # making the On-center and Off-center conv filters
-    kernel = torch.zeros([out_channels, in_channels, kernel_size, kernel_size], requires_grad=False)
-    kernel_2D = torch.zeros([kernel_size, kernel_size])
-
-    for i in range(kernel_size):
-        for j in range(kernel_size):
-            excite, inhibit = DoG_IB_2D(i + 1, j + 1, centerX, gamma, radius)
-            weight = excite * A_c + inhibit * A_s
-            if off:
-                weight *= -1.
-            kernel_2D[i][j] = weight
-
-    # Creating all the necessary kernels based on the input and output channels.
-    for i in range(out_channels):
-        for j in range(in_channels):
-            kernel[i][j] = kernel_2D
-
-    return kernel.float()
-
-def DoG_IB_3D(x, y, z, center, gamma, radius):
-    """compute weight at location (x, y, z) in the OOCS kernel with given parameters
-        Parameters:
-            x , y, z : position of the current weight
-            center : position of the kernel center
-            gamma : center to surround ratio
-            radius : center radius
-
-        Returns:
-            excite and inhibit : calculated from Equation2 in the paper, without the coefficients A-c and A-s
-
-    """
-    # compute sigma from radius of the center and gamma(center to surround ratio)
-    sigma = (radius / gamma) * (math.sqrt((1 - gamma ** 2) / (-6 * math.log(gamma))))
-    excite = (1 / (gamma ** 3)) * math.exp(
-        -1 * ((x - center) ** 2 + (y - center) ** 2 + (z - center) ** 2) / (2 * ((gamma * sigma) ** 2)))
-    inhibit = math.exp(-1 * ((x - center) ** 2 + (y - center) ** 2 + (z - center) ** 2) / (2 * (sigma ** 2)))
-
-    return excite, inhibit
-
-
-def IB_filters_3D(radius, gamma, in_channels, out_channels, off=False):
-    """compute the kernel filters with given shape and parameters
-        Parameters:
-            gamma : center to surround ratio
-            radius : center radius
-            in_channels and out_channels: filter dimensions
-            off(boolean) : if false, calculates on center kernel, and if true, off center
-
-        Returns:
-            kernel : On or Off center conv filters with requested shape
-
-    """
-
-    # size of the kernel
-    kernel_size = int((radius / gamma) * 2 - 1)
-    # center node index
-    centerX = int((kernel_size + 1) / 2)
-
-    posExcite = 0
-    posInhibit = 0
-    negExcite = 0
-    negInhibit = 0
-
-    for i in range(kernel_size):
-        for j in range(kernel_size):
-            for k in range(kernel_size):
-                excite, inhibit = DoG_IB_3D(i + 1, j + 1, k + 1, centerX, gamma, radius)
-                if excite > inhibit:
-                    posExcite += excite
-                    posInhibit += inhibit
-                else:
-                    negExcite += excite
-                    negInhibit += inhibit
-
-    # Calculating A-c and A-s, with requiring the positive vlaues sum up to 1 and negative vlaues to -1
-    x, y = symbols('x y')
-    sum = 3.
-    if kernel_size == 3:
-        sum = 1.
-    elif kernel_size == 5:
-        sum = 3.
-    elif kernel_size == 7:
-        sum = 5.
-    elif kernel_size == 9:
-        sum = 7.
-    solution = solve((x * posExcite + y * posInhibit - sum, negExcite * x + negInhibit * y + sum), x, y)
-    A_c, A_s = float(solution[x].evalf()), float(solution[y].evalf())
-
-    # making the On-center and Off-center conv filters
-    kernel = torch.zeros([out_channels, in_channels, kernel_size, kernel_size, kernel_size], requires_grad=False)
-    kernel_3D = torch.zeros([kernel_size, kernel_size, kernel_size])
-
-    for i in range(kernel_size):
-        for j in range(kernel_size):
-            for k in range(kernel_size):
-                excite, inhibit = DoG_IB_3D(i + 1, j + 1, k + 1, centerX, gamma, radius)
-                weight = excite * A_c + inhibit * A_s
-                if off:
-                    weight *= -1.
-                kernel_3D[i][j][k] = weight
-
-    # Creating all the necessary kernels based on the input and output channels.
-    for i in range(out_channels):
-        for j in range(in_channels):
-            kernel[i][j] = kernel_3D
-
-    return kernel.float()
+    def forward(self, input):
+        return F.conv3d(input, weight=self.conv_Off_filters, stride=self.ib_strides, padding=self.ib_paddings)
 
 
 class IBConvBlocks(nn.Module):
@@ -203,7 +68,7 @@ class IBConvBlocks(nn.Module):
                  dropout_op_kwargs: dict = None,
                  nonlin: Union[None, Type[torch.nn.Module]] = None,
                  nonlin_kwargs: dict = None,
-                 nonlin_first: bool = False
+                 nonlin_first: bool = False,
                  ):
         """
 
@@ -226,14 +91,95 @@ class IBConvBlocks(nn.Module):
         if not isinstance(output_channels, (tuple, list)):
             output_channels = [output_channels] * num_convs
 
-        self.convs = nn.Sequential(
-            ConvDropoutNormReLU(
-                conv_op, input_channels, output_channels[0], kernel_size, initial_stride, conv_bias, norm_op,
+        # Determine the IB convolutions filters and parameters.
+        if conv_op == nn.Conv2d:
+
+            # We are using kernel size = [5,5]
+            ib_kernel_size = [5,5]
+            radius = 2.0
+            gamma = 2.0/3.0
+
+            self.ib_strides = maybe_convert_scalar_to_list(conv_op, initial_stride)
+            self.ib_paddings = [(i - 1) // 2 for i in ib_kernel_size]
+
+            self.conv_On_filters = IB_filters_2D(radius=radius, gamma=gamma, 
+                                                in_channels=input_channels, 
+                                                out_channels=int(output_channels[0]/2), 
+                                                off=False)
+            self.conv_Off_filters = IB_filters_2D(radius=radius, gamma=gamma, 
+                                                in_channels=input_channels, 
+                                                out_channels=int(output_channels[0]/2), 
+                                                off=True)
+            
+            if torch.cuda.is_available():
+                self.conv_On_filters = self.conv_On_filters.cuda()    
+                self.conv_Off_filters = self.conv_Off_filters.cuda()
+
+            self.surround_modulation_DoG_on = DoG_on_2D(conv_On_filters=self.conv_On_filters,
+                                                        ib_strides=self.ib_strides,
+                                                        ib_paddings=self.ib_paddings)
+            self.surround_modulation_DoG_off = DoG_off_2D(conv_Off_filters=self.conv_Off_filters,
+                                                        ib_strides=self.ib_strides,
+                                                        ib_paddings=self.ib_paddings)
+
+        elif conv_op == nn.Conv3d:
+
+            # We are using kernel size = [5,5,5]
+            ib_kernel_size = [5,5,5]
+            radius = 2.0
+            gamma = 2.0/3.0
+
+            self.ib_strides = maybe_convert_scalar_to_list(conv_op, initial_stride)
+            self.ib_paddings = [(i - 1) // 2 for i in ib_kernel_size]
+            
+            self.conv_On_filters = IB_filters_3D(radius=radius, gamma=gamma, 
+                                                in_channels=input_channels, 
+                                                out_channels=int(output_channels[0]/2), 
+                                                off=False)
+            self.conv_Off_filters = IB_filters_3D(radius=radius, gamma=gamma, 
+                                                in_channels=input_channels, 
+                                                out_channels=int(output_channels[0]/2), 
+                                                off=True)
+            
+            if torch.cuda.is_available():
+                self.conv_On_filters = self.conv_On_filters.cuda()    
+                self.conv_Off_filters = self.conv_Off_filters.cuda()
+            
+            self.surround_modulation_DoG_on = DoG_on_3D(conv_On_filters=self.conv_On_filters,
+                                                        ib_strides=self.ib_strides,
+                                                        ib_paddings=self.ib_paddings)
+            self.surround_modulation_DoG_off = DoG_off_3D(conv_Off_filters=self.conv_Off_filters,
+                                                        ib_strides=self.ib_strides,
+                                                        ib_paddings=self.ib_paddings)
+
+        else:
+            raise ValueError("unknown convolution dimensionality, conv op: %s" % str(conv_op))
+
+
+        self.conv_before_on_sum = ConvDropoutNormReLU(
+                conv_op, input_channels, int(output_channels[0]/2), kernel_size, initial_stride, conv_bias, norm_op,
                 norm_op_kwargs, dropout_op, dropout_op_kwargs, nonlin, nonlin_kwargs, nonlin_first
-            ),
+            )
+        
+        self.conv_before_off_sum = ConvDropoutNormReLU(
+                conv_op, input_channels, int(output_channels[0]/2), kernel_size, initial_stride, conv_bias, norm_op,
+                norm_op_kwargs, dropout_op, dropout_op_kwargs, nonlin, nonlin_kwargs, nonlin_first
+            )
+
+        self.convs_after_on_sum = nn.Sequential(    
             *[
                 ConvDropoutNormReLU(
-                    conv_op, output_channels[i - 1], output_channels[i], kernel_size, 1, conv_bias, norm_op,
+                    conv_op, int(output_channels[i - 1]/2), int(output_channels[i]/2), kernel_size, 1, conv_bias, norm_op,
+                    norm_op_kwargs, dropout_op, dropout_op_kwargs, nonlin, nonlin_kwargs, nonlin_first
+                )
+                for i in range(1, num_convs)
+            ]
+        )
+
+        self.convs_after_off_sum = nn.Sequential(    
+            *[
+                ConvDropoutNormReLU(
+                    conv_op, int(output_channels[i - 1]/2), int(output_channels[i]/2), kernel_size, 1, conv_bias, norm_op,
                     norm_op_kwargs, dropout_op, dropout_op_kwargs, nonlin, nonlin_kwargs, nonlin_first
                 )
                 for i in range(1, num_convs)
@@ -242,19 +188,38 @@ class IBConvBlocks(nn.Module):
 
         self.output_channels = output_channels[-1]
         self.initial_stride = maybe_convert_scalar_to_list(conv_op, initial_stride)
+        self.nonlin = nonlin(**nonlin_kwargs)
 
     def forward(self, x):
-        return self.convs(x)
+        output1 = self.conv_before_on_sum(x)
+        output2 = self.conv_before_off_sum(x)
+
+        # On and Off surround modulation
+        sm_on = self.nonlin(self.surround_modulation_DoG_on(x))
+        sm_off = self.nonlin(self.surround_modulation_DoG_off(x))
+
+        input3 = sm_on + output1
+        input4 = sm_off + output2
+
+        output3 = self.convs_after_on_sum(input3)
+        output4 = self.convs_after_off_sum(input4)
+
+        outputs = torch.cat((output3, output4), 1)
+        return outputs
 
     def compute_conv_feature_map_size(self, input_size):
         assert len(input_size) == len(self.initial_stride), "just give the image size without color/feature channels or " \
                                                             "batch channel. Do not give input_size=(b, c, x, y(, z)). " \
                                                             "Give input_size=(x, y(, z))!"
-        output = self.convs[0].compute_conv_feature_map_size(input_size)
+        output = self.conv_before_on_sum.compute_conv_feature_map_size(input_size)
+        output += self.conv_before_off_sum.compute_conv_feature_map_size(input_size)
         size_after_stride = [i // j for i, j in zip(input_size, self.initial_stride)]
-        for b in self.convs[1:]:
+        for b in self.convs_after_on_sum:
+            output += b.compute_conv_feature_map_size(size_after_stride)
+        for b in self.convs_after_off_sum:
             output += b.compute_conv_feature_map_size(size_after_stride)
         return output
+
 
 class IBConvEncoder(nn.Module):
     def __init__(self,
@@ -275,12 +240,13 @@ class IBConvEncoder(nn.Module):
                  return_skips: bool = False,
                  nonlin_first: bool = False,
                  pool: str = 'max',
-                 ib_stages: Union[int, List[int], str] = 2, 
-                 # "ib_stages: cannot be 1 and cannot be more than n_stages. But could be a 
-                 # single int value (2 to n_stages), str value 'all' (will apply IB to all 
-                 # encoder layers except 1), or a list of stages (for example: [2,3,5], [2,4], etc.)
-
+                 ib_stages: Union[int, List[int], str] = 2,
                  ):
+        """
+        # "ib_stages: cannot be 1 and cannot be more than n_stages. But could be a 
+        # single int value (2 to n_stages), str value 'all' (will apply IB to all 
+        # encoder layers except 1), or a list of stages (for example: [2,3,5], [2,4], etc.)
+        """
 
         super().__init__()
         if isinstance(kernel_sizes, int):
@@ -313,8 +279,11 @@ class IBConvEncoder(nn.Module):
                 raise RuntimeError()
             
             # We are counting encoders from 1 to n_stages (instead of 0 to n_stages-1).
+            # This is because we usually count encoders and decoders from 1 to n_stages (in the Figure in the paper).
+            # So, stage=0 is Encoder layer 1, stage=1 is Encoder layer 2, and so on. You get it, right!!!
             if s+1 in self.ib_stages:
                 stage_modules.append(IBConvBlocks(
+                #stage_modules.append(StackedConvBlocks(
                     n_conv_per_stage[s], conv_op, input_channels, features_per_stage[s], kernel_sizes[s], conv_stride,
                     conv_bias, norm_op, norm_op_kwargs, dropout_op, dropout_op_kwargs, nonlin, nonlin_kwargs, nonlin_first
                 ))
@@ -365,30 +334,19 @@ class IBConvEncoder(nn.Module):
             input_size = [i // j for i, j in zip(input_size, self.strides[s])]
         return output
     
-    def get_ib_stages(self, ib_stages):
+    def get_ib_stages(self, ib_stages: Union[int, str, List[int], Tuple[int, ...]]):
         possible_ib_stages = [x for x in range(2, self.n_stages+1)]
-        if len(ib_stages) == 1:
-            if ib_stages[0] == 'all':
-                return possible_ib_stages
-            elif type(ib_stages[0]) is int and ib_stages[0] in possible_ib_stages:
-                return ib_stages[0]
-            else:
-                raise Exception(f"The provided IB stages are not compatible with the 
-                                possible values: single value or combination of these 
-                                {possible_ib_stages} or 'all'. You have given
-                                {ib_stages}.")
-        else:
+        
+        if isinstance(ib_stages, str) and ib_stages == 'all':
+            return possible_ib_stages
+        elif isinstance(ib_stages, int) and ib_stages in possible_ib_stages:
+            return [ib_stages]
+        elif isinstance(ib_stages, list) or isinstance(ib_stages, tuple):
             for stage in ib_stages:
-                if type(stage) is int and stage in possible_ib_stages:
+                if isinstance(stage, int) and stage in possible_ib_stages:
                     pass
                 else:
-                    raise Exception(f"The provided IB stages are not compatible with the 
-                                    possible values: single value or combination of these 
-                                    {possible_ib_stages} or 'all'. You have given
-                                    {ib_stages}.")
-
+                    raise Exception(f"The provided IB stages are not compatible with the possible values: single value or combination of these {possible_ib_stages} or 'all'. You have given {ib_stages}.")
             return ib_stages
-
-
-
-
+        else:
+            raise Exception(f"The provided IB stages are not compatible with the possible values: single value or combination of these {possible_ib_stages} or 'all'. You have given {ib_stages}.")
