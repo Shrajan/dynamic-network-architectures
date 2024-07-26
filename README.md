@@ -14,8 +14,16 @@ In contrast to the original [VGG](https://arxiv.org/pdf/1409.1556.pdf) implement
 ### U-Net
 For the [U-Net](https://arxiv.org/pdf/1505.04597.pdf) a plain convolutional encoder as well as a residual encoder are available. 
 
-### Attention-Net
+### Attention U-Net
 Based on the paper [Attention U-Net](https://arxiv.org/pdf/1804.03999), and the codes are modified using the [repository](https://github.com/ozan-oktay/Attention-Gated-Networks). 
+
+### IB U-Net
+Based on the paper [IB U-Net](https://arxiv.org/abs/2210.15949), and the codes are modified using the [repository](https://github.com/Shrajan/IB_U_Nets). 
+
+### DWS U-Net
+All the normal convolutions are replaced with depthwise-separable convolutions in the U-Net model. There are two versions:
+1. First convolution is a normal convolution (patch-based), remaining are depthwise-separable convolutions (first patch - FpDWS).
+2. All are are depthwise-separable convolutions (DWS).
 
 # Acknowledgements
 
