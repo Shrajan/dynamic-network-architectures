@@ -42,7 +42,7 @@ class DWS_ConvDropoutNormReLU(nn.Module):
                     input_channels,
                     input_channels,
                     kernel_size,
-                    stride=1,
+                    stride=stride,
                     padding=[(i - 1) // 2 for i in kernel_size],
                     dilation=1,
                     bias=conv_bias,
@@ -52,7 +52,7 @@ class DWS_ConvDropoutNormReLU(nn.Module):
                     input_channels,
                     output_channels,
                     kernel_size=1,
-                    stride=stride,
+                    stride=1,
                     dilation=1,
                     bias=conv_bias,
                 ))
