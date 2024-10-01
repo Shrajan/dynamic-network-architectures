@@ -161,7 +161,7 @@ class FirstPatchConv_DWS_ConvEncoder(nn.Module):
                     first_layer_output_channels = [first_layer_output_channels] * n_conv_per_stage[s]
 
                 stage_modules.append(ConvDropoutNormReLU(
-                    conv_op, input_channels, first_layer_output_channels[0], 3, 1, conv_bias, norm_op,
+                    conv_op, input_channels, first_layer_output_channels[0], kernel_sizes[s], 1, conv_bias, norm_op,
                     norm_op_kwargs, dropout_op, dropout_op_kwargs, nonlin, nonlin_kwargs, nonlin_first
                     ))
                 
