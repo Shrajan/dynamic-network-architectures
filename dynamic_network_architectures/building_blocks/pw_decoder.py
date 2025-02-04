@@ -5,15 +5,15 @@ from typing import Union, List, Tuple, Type
 
 from torch.nn.modules.dropout import _DropoutNd
 
-from dynamic_network_architectures.building_blocks.dws_conv_blocks import DWS_StackedConvBlocks
+from dynamic_network_architectures.building_blocks.simple_conv_blocks import StackedConvBlocks
 from dynamic_network_architectures.building_blocks.helper import get_matching_convtransp
 from dynamic_network_architectures.building_blocks.residual_encoders import ResidualEncoder
-from dynamic_network_architectures.building_blocks.dws_conv_encoder import DWS_ConvEncoder
+from dynamic_network_architectures.building_blocks.plain_conv_encoder import PlainConvEncoder
 
-
-class DWS_UNetDecoder(nn.Module):
+# Modified the kernel size for StackedConvBlocks to 1.
+class PointWiseConv_Decoder(nn.Module):
     def __init__(self,
-                 encoder: DWS_ConvEncoder,
+                 encoder: Union[PlainConvEncoder, ResidualEncoder],
                  num_classes: int,
                  n_conv_per_stage: Union[int, Tuple[int, ...], List[int]],
                  deep_supervision,
@@ -75,9 +75,9 @@ class DWS_UNetDecoder(nn.Module):
                 bias=conv_bias
             ))
             # input features to conv is 2x input_features_skip (concat input_features_skip with transpconv output)
-            stages.append(DWS_StackedConvBlocks(
+            stages.append(StackedConvBlocks(
                 n_conv_per_stage[s-1], encoder.conv_op, 2 * input_features_skip, input_features_skip,
-                encoder.kernel_sizes[-(s + 1)], 1,
+                1, 1,
                 conv_bias,
                 norm_op,
                 norm_op_kwargs,
