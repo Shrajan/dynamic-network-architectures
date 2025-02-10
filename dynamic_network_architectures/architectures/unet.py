@@ -898,7 +898,7 @@ class DwEnc_PwDec_UNet(nn.Module):
                                         n_conv_per_stage, conv_bias, enc_norm_op, enc_norm_op_kwargs, dropout_op,
                                         dropout_op_kwargs, enc_nonlin, enc_nonlin_kwargs, return_skips=True,
                                         nonlin_first=nonlin_first)
-        self.decoder = PointWiseConv_Decoder(self.encoder, num_classes, n_conv_per_stage_decoder, deep_supervision,
+        self.decoder = DWS_UNetDecoder(self.encoder, num_classes, n_conv_per_stage_decoder, deep_supervision,
                                             norm_op=dec_norm_op, norm_op_kwargs=dec_norm_op_kwargs, nonlin=dec_nonlin,
                                             nonlin_kwargs=dec_nonlin_kwargs)
 
