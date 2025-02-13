@@ -71,12 +71,15 @@ class PointWiseConv_Decoder(nn.Module):
             input_features_skip = encoder.output_channels[-(s + 1)]
             stride_for_transpconv = encoder.strides[-s]
             transpconvs.append(transpconv_op(
-                input_features_below, input_features_skip, stride_for_transpconv, stride_for_transpconv,
-                bias=conv_bias
+                input_features_below, input_features_below, 
+                encoder.kernel_sizes[-s], stride_for_transpconv,
+                padding=[(i - 1) // 2 for i in encoder.kernel_sizes[-s]], 
+                output_padding=[i%2 for i in encoder.kernel_sizes[-s]], 
+                groups=input_features_below, bias=conv_bias
             ))
-            # input features to conv is 2x input_features_skip (concat input_features_skip with transpconv output)
+            # input features to conv is input_features_skip + input_features_below (concat skip features with transpconv output)
             stages.append(StackedConvBlocks(
-                n_conv_per_stage[s-1], encoder.conv_op, 2 * input_features_skip, input_features_skip,
+                n_conv_per_stage[s-1], encoder.conv_op, input_features_below + input_features_skip, input_features_skip,
                 1, 1,
                 conv_bias,
                 norm_op,
