@@ -3,6 +3,10 @@ import torch
 from torch import nn
 
 from timm.layers import RotaryEmbeddingCat
+from dynamic_network_architectures.architectures.abstract_arch import (
+    AbstractDynamicNetworkArchitectures,
+    test_submodules_loadable,
+)
 from dynamic_network_architectures.building_blocks.eva import Eva
 from dynamic_network_architectures.building_blocks.patch_encode_decode import LayerNormNd, PatchDecode, PatchEmbed
 from dynamic_network_architectures.initialization.weight_init import InitWeights_He
@@ -33,14 +37,14 @@ _PRIMUS_CONFIGS = {
 }
 
 
-class Primus(nn.Module):
+class Primus(AbstractDynamicNetworkArchitectures):
 
     def __init__(
         self,
         input_channels: int,
         embed_dim: int,
         patch_embed_size: Tuple[int, ...],
-        output_channels: int,
+        num_classes: int,
         eva_depth: int = 24,
         eva_numheads: int = 16,
         input_shape: Tuple[int, ...] = None,
@@ -70,10 +74,14 @@ class Primus(nn.Module):
         assert all([j % i == 0 for i, j in zip(patch_embed_size, input_shape)])
 
         super().__init__()
+        self.key_to_encoder = "eva"
+        self.key_to_stem = "down_projection"
+        self.keys_to_in_proj = ("down_projection.proj",)
+        self.key_to_lpe = "eva.pos_embed"
 
         self.down_projection = PatchEmbed(patch_embed_size, input_channels, embed_dim)
         self.up_projection = PatchDecode(
-            patch_embed_size, embed_dim, output_channels, norm=decoder_norm, activation=decoder_act
+            patch_embed_size, embed_dim, num_classes, norm=decoder_norm, activation=decoder_act
         )
 
         # we need to compute the ref_feat_shape for eva
@@ -152,7 +160,7 @@ class Primus(nn.Module):
         B, C, W, H, D = x.shape
         num_patches = W * H * D
 
-        x = rearrange(x, "b c w h d -> b (h w d) c")
+        x = rearrange(x, "b c w h d -> b (w h d) c")
         if self.register_tokens is not None:
             x = torch.cat(
                 (
@@ -167,9 +175,9 @@ class Primus(nn.Module):
             x = x[:, self.register_tokens.shape[1] :]  # Removes the register tokens
         # In-fill in-active patches with empty tokens
         restored_x, restoration_mask = self.restore_full_sequence(x, keep_indices, num_patches)
-        x = rearrange(restored_x, "b (h w d) c -> b c w h d", h=H, w=W, d=D)
+        x = rearrange(restored_x, "b (w h d) c -> b c w h d", h=H, w=W, d=D)
         if restoration_mask is not None:
-            mask = rearrange(restoration_mask, "b (h w d) -> b w h d", h=H, w=W, d=D)
+            mask = rearrange(restoration_mask, "b (w h d) -> b w h d", h=H, w=W, d=D)
             full_mask = (
                 mask.repeat_interleave(FW // W, dim=1)
                 .repeat_interleave(FH // H, dim=2)
@@ -183,7 +191,7 @@ class Primus(nn.Module):
         if ret_mask:
             return dec_out, full_mask
         else:
-            return dec_out, None
+            return dec_out
 
     def compute_conv_feature_map_size(self, input_size):
         raise NotImplementedError("yuck")
@@ -210,7 +218,7 @@ class PrimusX(Primus):
             input_channels=input_channels,
             embed_dim=conf["embed_dim"],
             patch_embed_size=patch_embed_size,
-            output_channels=output_channels,
+            num_classes=output_channels,
             eva_depth=conf["eva_depth"],
             eva_numheads=conf["eva_numheads"],
             input_shape=input_shape,
@@ -370,35 +378,40 @@ if __name__ == "__main__":
     print("Primus S")
     x = torch.rand([1, 1, 96, 96, 96], device="cuda", dtype=torch.float32)
     model = PrimusS(1, 2, (8, 8, 8), (96, 96, 96)).cuda()
-    _, _ = model(x)
+    _ = model(x)
     print(f"Parameter count: {parameter_count(model)[''] / 1e6:.2f}M")
     print(FlopCountAnalysis(model, x))
     print(parameter_count_table(model, max_depth=2))
+
+    test_submodules_loadable(model)
 
     time.sleep(5)
     print("Primus B")
     model = PrimusB(1, 2, (8, 8, 8), (96, 96, 96)).cuda()
-    _, _ = model(x)
+    _ = model(x)
     print(f"Parameter count: {parameter_count(model)[''] / 1e6:.2f}M")
     print(FlopCountAnalysis(model, x))
     print(parameter_count_table(model, max_depth=2))
 
+    test_submodules_loadable(model)
     time.sleep(5)
 
     print("Primus M")
     model = PrimusM(1, 2, (8, 8, 8), (96, 96, 96)).cuda()
-    _, _ = model(x)
+    _ = model(x)
     print(f"Parameter count: {parameter_count(model)[''] / 1e6:.2f}M")
     print(FlopCountAnalysis(model, x))
     print(parameter_count_table(model, max_depth=2))
 
+    test_submodules_loadable(model)
     time.sleep(5)
 
     print("Primus L")
     model = PrimusL(1, 2, (8, 8, 8), (96, 96, 96)).cuda()
-    _, _ = model(x)
+    _ = model(x)
     print(f"Parameter count: {parameter_count(model)[''] / 1e6:.2f}M")
     print(FlopCountAnalysis(model, x))
     print(parameter_count_table(model, max_depth=2))
 
+    test_submodules_loadable(model)
     time.sleep(5)
