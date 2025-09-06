@@ -3,12 +3,88 @@ import torch
 from torch import nn
 from typing import Union, List, Tuple, Type
 
+from torch.nn.modules.conv import _ConvNd, _ConvTransposeNd
 from torch.nn.modules.dropout import _DropoutNd
 
 from dynamic_network_architectures.building_blocks.dws_conv_blocks import DWS_StackedConvBlocks
 from dynamic_network_architectures.building_blocks.helper import get_matching_convtransp
 from dynamic_network_architectures.building_blocks.residual_encoders import ResidualEncoder
 from dynamic_network_architectures.building_blocks.dws_conv_encoder import DWS_ConvEncoder
+
+
+class DWS_TransConvDropoutNormReLU(nn.Module):
+    def __init__(self,
+                 transpconv_op: Type[_ConvTransposeNd],
+                 conv_op: Type[_ConvNd],
+                 input_channels: int,
+                 output_channels: int,
+                 kernel_size: Union[int, List[int], Tuple[int, ...]],
+                 stride: Union[int, List[int], Tuple[int, ...]],
+                 conv_bias: bool = False,
+                 norm_op: Union[None, Type[nn.Module]] = None,
+                 norm_op_kwargs: dict = None,
+                 dropout_op: Union[None, Type[_DropoutNd]] = None,
+                 dropout_op_kwargs: dict = None,
+                 nonlin: Union[None, Type[torch.nn.Module]] = None,
+                 nonlin_kwargs: dict = None,
+                 nonlin_first: bool = False
+                 ):
+        super(DWS_TransConvDropoutNormReLU, self).__init__()
+        self.input_channels = input_channels
+        self.output_channels = output_channels
+        self.stride = stride
+
+        if norm_op_kwargs is None:
+            norm_op_kwargs = {}
+        if nonlin_kwargs is None:
+            nonlin_kwargs = {}
+
+        ops = []
+
+        self.dws_conv = nn.Sequential(transpconv_op(
+                    input_channels,
+                    input_channels,
+                    kernel_size,
+                    stride=stride,
+                    bias=conv_bias,
+                    groups=input_channels,
+                ),
+                conv_op(
+                    input_channels,
+                    output_channels,
+                    kernel_size=1,
+                    stride=1,
+                    dilation=1,
+                    bias=conv_bias,
+                ))
+        ops.append(self.dws_conv)
+
+        if dropout_op is not None:
+            self.dropout = dropout_op(**dropout_op_kwargs)
+            ops.append(self.dropout)
+
+        if norm_op is not None:
+            self.norm = norm_op(output_channels, **norm_op_kwargs)
+            ops.append(self.norm)
+
+        if nonlin is not None:
+            self.nonlin = nonlin(**nonlin_kwargs)
+            ops.append(self.nonlin)
+
+        if nonlin_first and (norm_op is not None and nonlin is not None):
+            ops[-1], ops[-2] = ops[-2], ops[-1]
+
+        self.all_modules = nn.Sequential(*ops)
+
+    def forward(self, x):
+        return self.all_modules(x)
+
+    def compute_conv_feature_map_size(self, input_size):
+        assert len(input_size) == len(self.stride), "just give the image size without color/feature channels or " \
+                                                    "batch channel. Do not give input_size=(b, c, x, y(, z)). " \
+                                                    "Give input_size=(x, y(, z))!"
+        output_size = [i // j for i, j in zip(input_size, self.stride)]  # we always do same padding
+        return np.prod([self.output_channels, *output_size], dtype=np.int64)
 
 
 class DWS_UNetDecoder(nn.Module):
@@ -70,9 +146,13 @@ class DWS_UNetDecoder(nn.Module):
             input_features_below = encoder.output_channels[-s]
             input_features_skip = encoder.output_channels[-(s + 1)]
             stride_for_transpconv = encoder.strides[-s]
-            transpconvs.append(transpconv_op(
-                input_features_below, input_features_skip, stride_for_transpconv, stride_for_transpconv,
-                bias=conv_bias
+            transpconvs.append(DWS_TransConvDropoutNormReLU(transpconv_op=transpconv_op,
+                conv_op=encoder.conv_op, input_channels=input_features_below, 
+                output_channels=input_features_skip, kernel_size=stride_for_transpconv, 
+                stride=stride_for_transpconv, conv_bias=conv_bias, norm_op=norm_op,
+                norm_op_kwargs=norm_op_kwargs, dropout_op=dropout_op,
+                dropout_op_kwargs=dropout_op_kwargs, nonlin=nonlin, 
+                nonlin_kwargs=nonlin_kwargs, nonlin_first=nonlin_first
             ))
             # input features to conv is 2x input_features_skip (concat input_features_skip with transpconv output)
             stages.append(DWS_StackedConvBlocks(
